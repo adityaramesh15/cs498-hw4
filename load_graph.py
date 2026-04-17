@@ -1,7 +1,7 @@
 from neo4j import GraphDatabase 
 import os
-from dotenv import load_dotenv
 import pandas as pd
+from dotenv import load_dotenv
 
 load_dotenv()
 neo4j_password = os.getenv("NEO4J_PASS")
@@ -11,7 +11,7 @@ neo4j_password = os.getenv("NEO4J_PASS")
 # print(driver.get_server_info()) 
 
 
-URI = "bolt://35.226.166.143:7687" 
+URI = "bolt://34.123.109.175:7687" 
 AUTH = ("neo4j", neo4j_password)
 
 def load_data():
