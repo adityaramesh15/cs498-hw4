@@ -11,7 +11,7 @@ neo4j_password = os.getenv("NEO4J_PASS")
 # print(driver.get_server_info()) 
 
 
-URI = "bolt://34.123.109.175:7687" 
+URI = "bolt://34.136.22.87:7687" 
 AUTH = ("neo4j", neo4j_password)
 
 def load_data():
@@ -21,13 +21,9 @@ def load_data():
     
     query = """
     UNWIND $batch AS row
-    
-    // 1. Merge Nodes (MERGE prevents duplicates)
     MERGE (d:Driver {driver_id: toString(row.driver_id)})
     MERGE (c:Company {name: toString(row.company)})
     MERGE (dropoff:Area {area_id: toInteger(row.dropoff_area)})
-    
-    // 2. Merge Relationships
     MERGE (d)-[:WORKS_FOR]->(c)
     MERGE (d)-[:TRIP {
         trip_id: toString(row.trip_id),
@@ -47,7 +43,7 @@ def load_data():
         
     with driver.session() as session:
         print("Loading data into Neo4j... this may take a moment.")
-        session.run(query, records=records)
+        session.run(query, batch=records)
         print("Data successfully loaded!")
         
     driver.close()
