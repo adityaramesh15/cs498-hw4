@@ -2,11 +2,15 @@ from flask import Flask, request, jsonify
 from neo4j import GraphDatabase
 import os
 from dotenv import load_dotenv
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import col, avg, count
+
 
 load_dotenv()
 neo4j_password = os.getenv("NEO4J_PASS")
 
 app = Flask(__name__)
+spark = SparkSession.builder.appName("TaxiSparkAPI").getOrCreate()
 
 URI = "bolt://localhost:7687"
 AUTH = ("neo4j", neo4j_password)
@@ -89,6 +93,81 @@ def avg_fare_by_company():
         results = session.run(query)
         companies = [{"name": record["name"], "avg_fare": record["avg_fare"]} for record in results]
         return jsonify({"companies": companies})
+    
+# --- Spark Endpoint 1: Area Trip Stats ---
+@app.route('/area-stats', methods=['GET'])
+def area_stats():
+    area_id = int(request.args.get('area_id'))
+    
+    # Read the data
+    df = spark.read.csv("taxi_trips_clean.csv", header=True, inferSchema=True)
+    
+    # Filter, group, and aggregate
+    stats = df.filter(col("dropoff_area") == area_id) \
+              .agg(
+                  count("*").alias("trip_count"),
+                  avg("fare").alias("avg_fare"),
+                  avg("trip_seconds").alias("avg_trip_seconds")
+              ).collect()[0]
+              
+    return jsonify({
+        "area_id": area_id,
+        "trip_count": stats["trip_count"] or 0,
+        "avg_fare": round(stats["avg_fare"], 2) if stats["avg_fare"] else 0.0,
+        "avg_trip_seconds": int(stats["avg_trip_seconds"]) if stats["avg_trip_seconds"] else 0
+    })
+
+# --- Spark Endpoint 2: Top Pickup Areas ---
+@app.route('/top-pickup-areas', methods=['GET'])
+def top_pickup_areas():
+    n = int(request.args.get('n', 10))
+    
+    df = spark.read.csv("taxi_trips_clean.csv", header=True, inferSchema=True)
+    
+    # GroupBy, aggregate, order, and limit (No pandas used here per instructions!)
+    top_areas = df.groupBy("pickup_area") \
+                  .agg(count("*").alias("trip_count")) \
+                  .orderBy(col("trip_count").desc()) \
+                  .limit(n) \
+                  .collect()
+                  
+    areas_list = [{"pickup_area": row["pickup_area"], "trip_count": row["trip_count"]} for row in top_areas]
+    return jsonify({"areas": areas_list})
+
+# --- Spark Endpoint 3: Company Comparison (Spark SQL) ---
+@app.route('/company-compare', methods=['GET'])
+def company_compare():
+    c1 = request.args.get('company1')
+    c2 = request.args.get('company2')
+    
+    df = spark.read.csv("taxi_trips_clean.csv", header=True, inferSchema=True)
+    
+    # Add fare_per_minute column
+    df = df.withColumn("fare_per_minute", col("fare") / (col("trip_seconds") / 60.0))
+    
+    # Register as temp view
+    df.createOrReplaceTempView("trips")
+    
+    # Single Spark SQL query
+    query = f"""
+        SELECT company, 
+               COUNT(*) AS trip_count, 
+               ROUND(AVG(fare), 2) AS avg_fare, 
+               ROUND(AVG(fare_per_minute), 2) AS avg_fare_per_minute,
+               CAST(ROUND(AVG(trip_seconds)) AS INT) AS avg_trip_seconds
+        FROM trips 
+        WHERE company IN ('{c1}', '{c2}')
+        GROUP BY company
+    """
+    results = spark.sql(query).collect()
+    
+    # Check if both companies were found
+    found_companies = [row["company"] for row in results]
+    if c1 not in found_companies or c2 not in found_companies:
+        return jsonify({"error": "one or more companies not found"})
+            
+    comparison = [row.asDict() for row in results]
+    return jsonify({"comparison": comparison})
 
 if __name__ == '__main__':
     # Run the app on 0.0.0.0 to allow external access, on port 5000
