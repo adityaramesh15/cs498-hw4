@@ -20,17 +20,20 @@ def load_data():
     records = df.to_dict('records')
     
     query = """
-    UNWIND $records AS row
+    UNWIND $batch AS row
     
-    // Create/Merge Nodes
-    MERGE (d:Driver {driver_id: row.driver_id})
-    MERGE (c:Company {name: row.company})
-    MERGE (a:Area {area_id: row.dropoff_area})
+    // 1. Merge Nodes (MERGE prevents duplicates)
+    MERGE (d:Driver {driver_id: toString(row.driver_id)})
+    MERGE (c:Company {name: toString(row.company)})
+    MERGE (dropoff:Area {area_id: toInteger(row.dropoff_area)})
     
-    // Create/Merge Relationships
+    // 2. Merge Relationships
     MERGE (d)-[:WORKS_FOR]->(c)
-    MERGE (d)-[t:TRIP {trip_id: row.trip_id}]->(a)
-    ON CREATE SET t.fare = row.fare, t.trip_seconds = row.trip_seconds
+    MERGE (d)-[:TRIP {
+        trip_id: toString(row.trip_id),
+        fare: toFloat(row.fare),
+        trip_seconds: toInteger(row.trip_seconds)
+    }]->(dropoff)
     """
     
     driver = GraphDatabase.driver(URI, auth=AUTH)
